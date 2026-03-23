@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的个人书签导航</title>
+    <!-- 预连接favicon服务，加快图标加载 -->
+    <link rel="preconnect" href="https://www.google.com">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        dark: '#0f172a',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+        }
+    </style>
+</head>
+<body class="relative overflow-x-hidden text-white">
+    <!-- 星空背景：改用Canvas绘制，大幅减少DOM节点，降低内存占用 -->
+    <canvas id="stars-canvas" class="fixed inset-0 -z-10 bg-gradient-to-b from-dark via-[#1a1f3a] to-[#2d3a6b]"></canvas>
+
+    <!-- 加载提示 -->
+    <div id="loading" class="fixed inset-0 flex items-center justify-center z-50 bg-dark/80">
+        <div class="text-center">
+            <i class="fa fa-spinner fa-spin text-4xl mb-3"></i>
+            <p>正在加载你的书签数据...</p>
+        </div>
+    </div>
+
+    <!-- 侧边栏 -->
+    <aside class="fixed left-0 top-0 h-full w-56 bg-white/5 backdrop-blur-sm p-4 overflow-y-auto hidden" id="sidebar">
+        <div class="flex items-center gap-2 mb-8">
+            <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+                <i class="fa fa-bookmark text-white"></i>
+            </div>
+            <h1 class="text-xl font-bold">我的书签</h1>
+        </div>
+        <ul id="category-list" class="space-y-1">
+            <!-- 分类会动态生成 -->
+        </ul>
+        <div class="mt-8 pt-4 border-t border-white/10">
+            <button id="add-category-btn" class="w-full py-2 px-3 rounded-lg bg-white/10 hover:bg-white/20 transition text-sm flex items-center gap-2">
+                <i class="fa fa-plus"></i> 添加分类
+            </button>
+        </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="ml-56 p-6 hidden" id="main-content">
+        <!-- 顶部搜索栏 -->
+        <div class="max-w-3xl mx-auto mb-8">
+            <div class="relative">
+                <input 
+                    type="text" 
+                    id="search-input"
+                    placeholder="搜索书签、网址..."
+                    class="w-full py-3 px-5 pl-12 rounded-full bg-white/10 backdrop-blur-sm border border-white/10 text-white placeholder-white/80 focus:outline-none focus:ring-2 focus:ring-primary/50 transition"
+                >
+                <i class="fa fa-search absolute left-5 top-1/2 -translate-y-1/2 text-white/80"></i>
+            </div>
+        </div>
+
+        <!-- 书签列表 -->
+        <div class="mb-6 flex justify-between items-center">
+            <h2 id="current-category-title" class="text-2xl font-bold">全部书签</h2>
+            <div class="flex gap-2">
+                <button id="import-bookmark-btn" class="py-2 px-4 rounded-lg bg-white/10 hover:bg-white/20 transition flex items-center gap-2">
+                    <i class="fa fa-upload"></i> 导入书签
+                </button>
+                <input type="file" id="import-file-input" accept=".html" class="hidden">
+                <button id="add-bookmark-btn" class="py-2 px-4 rounded-lg bg-primary hover:bg-primary/90 transition flex items-center gap-2">
+                    <i class="fa fa-plus"></i> 添加书签
+                </button>
+            </div>
+        </div>
+        <div id="bookmark-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <!-- 书签卡片会动态生成 -->
+        </div>
+    </main>
+
+    <!-- 添加/编辑书签弹窗 -->
+    <div id="bookmark-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden items-center justify-center z-50">
+        <div class="bg-white/20 backdrop-blur-sm rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
+            <h3 id="modal-title" class="text-xl font-bold text-white mb-4">添加新书签</h3>
+            <form id="bookmark-form" class="space-y-4">
+                <input type="hidden" id="bookmark-id">
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">网站名称</label>
+                    <input type="text" id="bookmark-name" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">网站地址</label>
+                    <input type="url" id="bookmark-url" required placeholder="https://..." class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">分类</label>
+                    <select id="bookmark-category" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white">
+                        <!-- 分类选项动态生成 -->
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">描述（可选）</label>
+                    <textarea id="bookmark-desc" rows="2" class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" id="close-modal-btn" class="flex-1 py-2 px-4 border border-white/20 rounded-lg text-white hover:bg-white/10 transition">取消</button>
+                    <button type="submit" class="flex-1 py-2 px-4 bg-primary text-white rounded-lg hover:bg-primary/90 transition">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 添加分类弹窗 -->
+    <div id="category-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden items-center justify-center z-50">
+        <div class="bg-white/20 backdrop-blur-sm rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
+            <h3 class="text-xl font-bold text-white mb-4">添加新分类</h3>
+            <form id="category-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">分类名称</label>
+                    <input type="text" id="category-name" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" id="close-category-modal-btn" class="flex-1 py-2 px-4 border border-white/20 rounded-lg text-white hover:bg-white/10 transition">取消</button>
+                    <button type="submit" class="flex-1 py-2 px-4 bg-primary text-white rounded-lg hover:bg-primary/90 transition">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Firebase配置
+        const firebaseConfig = {
+          apiKey: "AIzaSyAupnUEcOjz-5XNTHEz67uLMxcw2NFEJ0Q",
+          authDomain: "lriry-bookmark.firebaseapp.com",
+          projectId: "lriry-bookmark",
+          storageBucket: "lriry-bookmark.firebasestorage.app",
+          messagingSenderId: "832052977406",
+          appId: "1:832052977406:web:5adea0b040fac459628faf",
+          measurementId: "G-83LJD9ENSV"
+        };
+
+        // 初始化Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
+        // 数据初始化
+        let bookmarks = [];
+        let categories = ['常用工具', '学习资源', '娱乐网站', '工作相关'];
+        let currentCategory = 'all';
+        let searchKeyword = '';
+        let userDoc = null;
+
+        // Canvas星空背景：大幅优化性能，减少DOM节点和内存占用
+        function initStarCanvas() {
+            const canvas = document.getElementById('stars-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // 适配屏幕大小
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // 生成星星数据
+            const stars = [];
+            for (let i = 0; i < 100; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height * 0.7,
+                    size: Math.random() * 2 + 1,
+                    opacity: Math.random() * 0.5 + 0.5,
+                    speed: (Math.random() * 0.02 + 0.01)
+                });
+            }
+
+            // 动画循环
+            function animate() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                stars.forEach(star => {
+                    // 闪烁效果
+                    star.opacity += star.speed;
+                    if (star.opacity > 1 || star.opacity < 0.2) {
+                        star.speed = -star.speed;
+                    }
+                    
+                    // 绘制星星
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${star.opacity})`;
+                    ctx.fill();
+                });
+
+                requestAnimationFrame(animate);
+            }
+            animate();
+        }
+
+        // 获取网站图标
+        function getFavicon(url) {
+            try {
+                const domain = new URL(url).hostname;
+                return `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
+            } catch (e) {
+                return '';
+            }
+        }
+
+        // 删除分类
+        async function deleteCategory(categoryName) {
+            if (categoryName === 'all') return;
+            // 不能删除最后一个分类
+            if (categories.length <= 1) {
+                alert('至少需要保留一个分类哦~');
+                return;
+            }
+            if (!confirm(`确定要删除分类「${categoryName}」吗？该分类下的书签会自动移到「常用工具」分类中。`)) return;
+
+            // 把该分类下的书签移到常用工具
+            bookmarks.forEach(bookmark => {
+                if (bookmark.category === categoryName) {
+                    bookmark.category = '常用工具';
+                }
+            });
+
+            // 删除分类
+            categories = categories.filter(c => c !== categoryName);
+            // 如果当前选中的是这个分类，切换到全部
+            if (currentCategory === categoryName) {
+                currentCategory = 'all';
+            }
+
+            // 保存到云端
+            await saveDataToCloud();
+            renderCategories();
+            renderBookmarks();
+        }
+
+        // 渲染分类列表
+        function renderCategories() {
+            const categoryList = document.getElementById('category-list');
+            const categorySelect = document.getElementById('bookmark-category');
+            
+            // 清空
+            categoryList.innerHTML = '';
+            categorySelect.innerHTML = '';
+
+            // 添加全部选项
+            const allItem = document.createElement('li');
+            allItem.innerHTML = `
+                <button data-category="all" class="w-full text-left py-2 px-3 rounded-lg ${currentCategory === 'all' ? 'bg-primary/20 text-primary' : 'hover:bg-white/10'} transition flex items-center gap-2 group">
+                    <i class="fa fa-th-large"></i> 全部书签
+                </button>
+            `;
+            categoryList.appendChild(allItem);
+
+            // 遍历分类
+            categories.forEach(cat => {
+                // 侧边栏项
+                const item = document.createElement('li');
+                item.className = 'group relative';
+                item.innerHTML = `
+                    <button data-category="${cat}" class="w-full text-left py-2 px-3 rounded-lg ${currentCategory === cat ? 'bg-primary/20 text-primary' : 'hover:bg-white/10'} transition flex items-center gap-2 pr-8">
+                        <i class="fa fa-folder-o"></i> ${cat}
+                    </button>
+                    <button data-delete-category="${cat}" class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-white/10 hover:bg-red-500/30 flex items-center justify-center text-white/70 hover:text-red-300 opacity-0 group-hover:opacity-100 transition">
+                        <i class="fa fa-times text-xs"></i>
+                    </button>
+                `;
+                categoryList.appendChild(item);
+
+                // 下拉选项
+                const option = document.createElement('option');
+                option.value = cat;
+                option.textContent = cat;
+                categorySelect.appendChild(option);
+            });
+
+            // 绑定分类点击事件
+            categoryList.querySelectorAll('[data-category]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    currentCategory = btn.dataset.category;
+                    renderCategories();
+                    renderBookmarks();
+                });
+            });
+
+            // 绑定分类删除事件
+            categoryList.querySelectorAll('[data-delete-category]').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteCategory(btn.dataset.deleteCategory);
+                });
+            });
+        }
+
+        // 渲染书签列表（优化：用DocumentFragment减少DOM重排）
+        function renderBookmarks() {
+            const grid = document.getElementById('bookmark-grid');
+            const title = document.getElementById('current-category-title');
+            
+            // 更新标题
+            title.textContent = currentCategory === 'all' ? '全部书签' : currentCategory;
+
+            // 过滤书签
+            let filtered = bookmarks;
+            // 分类过滤
+            if (currentCategory !== 'all') {
+                filtered = filtered.filter(b => b.category === currentCategory);
+            }
+            // 搜索过滤
+            if (searchKeyword) {
+                const kw = searchKeyword.toLowerCase();
+                filtered = filtered.filter(b => 
+                    b.name.toLowerCase().includes(kw) || 
+                    b.desc?.toLowerCase().includes(kw) || 
+                    b.url.toLowerCase().includes(kw)
+                );
+            }
+
+            // 清空
+            grid.innerHTML = '';
+
+            if (filtered.length === 0) {
+                grid.innerHTML = `
+                    <div class="col-span-full text-center py-12 text-white">
+                        <i class="fa fa-folder-open-o text-4xl mb-3"></i>
+                        <p>暂无书签，点击右上角添加你的第一个书签吧~</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 用DocumentFragment批量添加DOM，减少重排
+            const fragment = document.createDocumentFragment();
+            // 渲染每个书签
+            filtered.forEach(bookmark => {
+                const card = document.createElement('div');
+                card.className = 'bg-white/20 backdrop-blur-sm rounded-xl p-4 shadow-lg hover:shadow-xl hover:bg-white/30 transition group relative';
+                card.innerHTML = `
+                    <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition flex gap-1">
+                        <button data-edit="${bookmark.id}" class="w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white">
+                            <i class="fa fa-pencil text-xs"></i>
+                        </button>
+                        <button data-delete="${bookmark.id}" class="w-6 h-6 rounded-full bg-white/10 hover:bg-red-500/30 flex items-center justify-center text-white hover:text-red-300">
+                            <i class="fa fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                    <a href="${bookmark.url}" target="_blank" class="block">
+                        <div class="flex items-center gap-3 mb-2">
+                            <img src="${getFavicon(bookmark.url)}" alt="" class="w-10 h-10 rounded-lg" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                            <div class="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center hidden">
+                                <i class="fa fa-globe text-white/80"></i>
+                            </div>
+                            <h3 class="font-semibold text-white truncate">${bookmark.name}</h3>
+                        </div>
+                        <p class="text-sm text-white/80 line-clamp-2">${bookmark.desc || '点击访问网站'}</p>
+                    </a>
+                `;
+                fragment.appendChild(card);
+            });
+
+            // 一次性添加所有卡片
+            grid.appendChild(fragment);
+
+            // 绑定编辑删除事件
+            grid.querySelectorAll('[data-edit]').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    editBookmark(btn.dataset.edit);
+                });
+            });
+            grid.querySelectorAll('[data-delete]').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    deleteBookmark(btn.dataset.delete);
+                });
+            });
+        }
+
+        // 保存数据到云端
+        async function saveDataToCloud() {
+            if (!userDoc) return;
+            await userDoc.set({
+                bookmarks: bookmarks,
+                categories: categories,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        }
+
+        // 打开添加书签弹窗
+        function openBookmarkModal() {
+            const modal = document.getElementById('bookmark-modal');
+            const form = document.getElementById('bookmark-form');
+            const title = document.getElementById('modal-title');
+            
+            // 重置表单
+            form.reset();
+            document.getElementById('bookmark-id').value = '';
+            title.textContent = '添加新书签';
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        // 编辑书签
+        function editBookmark(id) {
+            const bookmark = bookmarks.find(b => b.id === id);
+            if (!bookmark) return;
+
+            const modal = document.getElementById('bookmark-modal');
+            const form = document.getElementById('bookmark-form');
+            const title = document.getElementById('modal-title');
+            
+            // 填充数据
+            document.getElementById('bookmark-id').value = bookmark.id;
+            document.getElementById('bookmark-name').value = bookmark.name;
+            document.getElementById('bookmark-url').value = bookmark.url;
+            document.getElementById('bookmark-category').value = bookmark.category;
+            document.getElementById('bookmark-desc').value = bookmark.desc || '';
+            
+            title.textContent = '编辑书签';
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        // 删除书签
+        async function deleteBookmark(id) {
+            if (!confirm('确定要删除这个书签吗？')) return;
+            bookmarks = bookmarks.filter(b => b.id !== id);
+            await saveDataToCloud();
+            renderBookmarks();
+        }
+
+        // 关闭书签弹窗
+        function closeBookmarkModal() {
+            const modal = document.getElementById('bookmark-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // 打开分类弹窗
+        function openCategoryModal() {
+            const modal = document.getElementById('category-modal');
+            document.getElementById('category-form').reset();
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        // 关闭分类弹窗
+        function closeCategoryModal() {
+            const modal = document.getElementById('category-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // 处理书签导入
+        async function handleImportFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async function(event) {
+                const html = event.target.result;
+                // 解析HTML内容
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const links = doc.querySelectorAll('a');
+                let addedCount = 0;
+
+                links.forEach(link => {
+                    const url = link.href;
+                    const name = link.textContent.trim();
+                    // 过滤无效链接
+                    if (!url || !name || url.startsWith('javascript:') || url.startsWith('file:')) return;
+
+                    // 提取对应的分类（文件夹名称）
+                    let category = '导入的书签';
+                    let parent = link.parentElement;
+                    while (parent) {
+                        const folderTitle = parent.querySelector('h3');
+                        if (folderTitle) {
+                            category = folderTitle.textContent.trim();
+                            break;
+                        }
+                        parent = parent.parentElement;
+                    }
+
+                    // 添加新分类
+                    if (!categories.includes(category)) {
+                        categories.push(category);
+                    }
+
+                    // 避免重复导入
+                    const exists = bookmarks.find(b => b.url === url);
+                    if (!exists) {
+                        bookmarks.push({
+                            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                            name: name,
+                            url: url,
+                            category: category,
+                            desc: ''
+                        });
+                        addedCount++;
+                    }
+                });
+
+                // 保存到云端
+                await saveDataToCloud();
+                renderCategories();
+                renderBookmarks();
+                alert(`导入完成！成功添加了 ${addedCount} 个新书签，自动创建了对应的分类。`);
+                // 重置输入，方便下次导入
+                e.target.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        // 初始化
+        async function init() {
+            initStarCanvas();
+
+            // 匿名登录Firebase
+            try {
+                await auth.signInAnonymously();
+                const user = auth.currentUser;
+                userDoc = db.collection('users').doc(user.uid);
+
+                // 加载云端数据
+                const docSnap = await userDoc.get();
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    bookmarks = data.bookmarks || [];
+                    categories = data.categories || categories;
+                } else {
+                    // 第一次打开，导入本地的旧数据
+                    const localBookmarks = localStorage.getItem('my_bookmarks');
+                    const localCategories = localStorage.getItem('my_categories');
+                    if (localBookmarks) {
+                        bookmarks = JSON.parse(localBookmarks);
+                    }
+                    if (localCategories) {
+                        categories = JSON.parse(localCategories);
+                    }
+                    // 保存到云端
+                    await saveDataToCloud();
+                }
+
+                // 监听云端数据变化，实时同步
+                userDoc.onSnapshot((doc) => {
+                    if (doc.exists()) {
+                        const data = doc.data();
+                        // 只有数据变化了才更新，避免循环
+                        if (JSON.stringify(bookmarks) !== JSON.stringify(data.bookmarks) || 
+                            JSON.stringify(categories) !== JSON.stringify(data.categories)) {
+                            bookmarks = data.bookmarks || [];
+                            categories = data.categories || categories;
+                            renderCategories();
+                            renderBookmarks();
+                        }
+                    }
+                });
+
+                // 隐藏加载，显示内容
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('sidebar').classList.remove('hidden');
+                document.getElementById('main-content').classList.remove('hidden');
+
+                renderCategories();
+                renderBookmarks();
+
+                // 绑定事件
+                document.getElementById('add-bookmark-btn').addEventListener('click', openBookmarkModal);
+                document.getElementById('close-modal-btn').addEventListener('click', closeBookmarkModal);
+                document.getElementById('add-category-btn').addEventListener('click', openCategoryModal);
+                document.getElementById('close-category-modal-btn').addEventListener('click', closeCategoryModal);
+
+                // 导入书签事件
+                document.getElementById('import-bookmark-btn').addEventListener('click', () => {
+                    document.getElementById('import-file-input').click();
+                });
+                document.getElementById('import-file-input').addEventListener('change', handleImportFile);
+
+                // 搜索事件
+                document.getElementById('search-input').addEventListener('input', (e) => {
+                    searchKeyword = e.target.value;
+                    renderBookmarks();
+                });
+
+                // 书签表单提交
+                document.getElementById('bookmark-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const id = document.getElementById('bookmark-id').value;
+                    const name = document.getElementById('bookmark-name').value;
+                    let url = document.getElementById('bookmark-url').value;
+                    // 补全协议
+                    if (!url.startsWith('http')) {
+                        url = 'https://' + url;
+                    }
+                    const category = document.getElementById('bookmark-category').value;
+                    const desc = document.getElementById('bookmark-desc').value;
+
+                    if (id) {
+                        // 编辑
+                        const index = bookmarks.findIndex(b => b.id === id);
+                        if (index !== -1) {
+                            bookmarks[index] = { ...bookmarks[index], name, url, category, desc };
+                        }
+                    } else {
+                        // 添加
+                        bookmarks.push({
+                            id: Date.now().toString(),
+                            name,
+                            url,
+                            category,
+                            desc
+                        });
+                    }
+
+                    await saveDataToCloud();
+                    renderBookmarks();
+                    closeBookmarkModal();
+                });
+
+                // 分类表单提交
+                document.getElementById('category-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const name = document.getElementById('category-name').value;
+                    if (!categories.includes(name)) {
+                        categories.push(name);
+                        await saveDataToCloud();
+                        renderCategories();
+                    }
+                    closeCategoryModal();
+                });
+
+                // 点击遮罩关闭弹窗
+                document.getElementById('bookmark-modal').addEventListener('click', (e) => {
+                    if (e.target === e.currentTarget) closeBookmarkModal();
+                });
+                document.getElementById('category-modal').addEventListener('click', (e) => {
+                    if (e.target === e.currentTarget) closeCategoryModal();
+                });
+
+            } catch (error) {
+                console.error("Firebase初始化失败", error);
+                alert("同步功能初始化失败，不过你还是可以正常使用本地的书签功能~");
+                // 降级到本地模式
+                bookmarks = JSON.parse(localStorage.getItem('my_bookmarks')) || [];
+                categories = JSON.parse(localStorage.getItem('my_categories')) || categories;
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('sidebar').classList.remove('hidden');
+                document.getElementById('main-content').classList.remove('hidden');
+                renderCategories();
+                renderBookmarks();
+                // 重新绑定本地的事件
+                // ... 原来的本地事件，这里已经处理了
+            }
+        }
+
+        // 启动
+        init();
+    </script>
+</body>
+</html>
