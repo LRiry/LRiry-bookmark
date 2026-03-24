@@ -219,16 +219,34 @@
 
     <script>
         // 你的账号配置，你可以自己改这里的账号密码
-        const USER_CONFIG = {
-            // 你自己的登录账号密码
-            username: "mybookmark",
-            password: "123456",
-            // 对应的Gist同步配置，登录后自动加载
-            gist: {
-                id: "你的Gist ID",
-                token: "你的GitHub Token"
-            }
-        };
+        
+        // 清空硬编码的敏感信息
+const USER_CONFIG = {
+    username: "LRiry", // 保留你的登录账号
+    password: "123456",     // 保留你的登录密码
+    // gist配置不再写死在这里
+    gist: null
+};
+
+// 登录成功后，自动从本地存储加载Gist配置
+function loginSuccess() {
+    // 尝试从localStorage读取保存的Gist配置
+    const savedGist = localStorage.getItem('bookmark_gist_config');
+    if (savedGist) {
+        USER_CONFIG.gist = JSON.parse(savedGist);
+        // 自动触发同步
+        loadFromWebDAV();
+        alert('已自动加载云端书签配置');
+    }
+}
+
+// 成功设置Gist后，保存到本地存储
+function saveGistConfig(gistId, token) {
+    const config = { id: gistId, token: token };
+    localStorage.setItem('bookmark_gist_config', JSON.stringify(config));
+    USER_CONFIG.gist = config;
+}
+
 
         // 数据初始化
         let bookmarks = [];
