@@ -1,0 +1,1514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的个人书签导航</title>
+    <!-- 预连接favicon服务，加快图标加载 -->
+    <link rel="preconnect" href="https://www.google.com">
+    <link rel="preconnect" href="https://icon.horse">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        dark: '#0f172a',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .drag-over {
+                background-color: rgba(59, 130, 246, 0.3) !important;
+            }
+            .dragging {
+                opacity: 0.5;
+                transform: scale(0.95);
+            }
+            /* 优化侧边栏滚动条，改成小的半透明的，好看很多 */
+            #sidebar::-webkit-scrollbar {
+                width: 6px;
+            }
+            #sidebar::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            #sidebar::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.3);
+                border-radius: 3px;
+            }
+            #sidebar::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.5);
+            }
+            /* 缩进子分类 */
+            .category-indent {
+                margin-left: 16px;
+            }
+            /* 拖拽排序的提示线，70%透明白线 */
+            .drop-indicator {
+                position: absolute;
+                left: 0;
+                right: 0;
+                height: 2px;
+                background: rgba(255, 255, 255, 0.7);
+                z-index: 10;
+            }
+            .drop-indicator-child {
+                position: absolute;
+                left: 0;
+                right: 0;
+                top: 0;
+                bottom: 0;
+                background: rgba(59, 130, 246, 0.3);
+                border: 2px dashed #3b82f6;
+                z-index: 10;
+            }
+            /* 子分类标签的样式，和参考图一样 */
+            .sub-tab {
+                padding: 6px 16px;
+                border-radius: 999px;
+                background: rgba(255, 255, 255, 0.2);
+                cursor: pointer;
+                transition: all 0.2s;
+                white-space: nowrap;
+            }
+            .sub-tab:hover {
+                background: rgba(255, 255, 255, 0.3);
+            }
+            .sub-tab.active {
+                background: #3b82f6;
+                color: white;
+            }
+        }
+    </style>
+</head>
+<body class="relative overflow-x-hidden text-white">
+    <!-- 星空背景：改用Canvas绘制，大幅减少DOM节点，降低内存占用 -->
+    <canvas id="stars-canvas" class="fixed inset-0 -z-10 bg-gradient-to-b from-dark via-[#1a1f3a] to-[#2d3a6b]"></canvas>
+
+    <!-- 登录页面 -->
+    <div id="login-page" class="fixed inset-0 flex items-center justify-center z-50">
+        <div class="bg-white/20 backdrop-blur-sm rounded-xl p-8 w-full max-w-md mx-4 shadow-2xl">
+            <div class="text-center mb-6">
+                <div class="w-16 h-16 bg-primary rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <i class="fa fa-bookmark text-white text-2xl"></i>
+                </div>
+                <h2 class="text-2xl font-bold">书签导航</h2>
+                <p class="text-white/80 mt-2">登录你的账号，自动同步你的书签</p>
+            </div>
+            <form id="login-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">账号</label>
+                    <input type="text" id="login-username" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">密码</label>
+                    <input type="password" id="login-password" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="remember-me" class="rounded" checked>
+                    <label for="remember-me" class="text-sm text-white/80">记住我，下次自动登录</label>
+                </div>
+                <button type="submit" class="w-full py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition font-medium">
+                    登录
+                </button>
+                <p id="login-error" class="text-red-300 text-sm text-center hidden">账号或密码错误</p>
+            </form>
+        </div>
+    </div>
+
+    <!-- 加载提示 -->
+    <div id="loading" class="fixed inset-0 flex items-center justify-center z-50 bg-dark/80 hidden">
+        <div class="text-center">
+            <i class="fa fa-spinner fa-spin text-4xl mb-3"></i>
+            <p>正在加载你的书签数据...</p>
+        </div>
+    </div>
+
+    <!-- 个人账户设置弹窗 -->
+    <div id="account-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden items-center justify-center z-50">
+        <div class="bg-white/20 backdrop-blur-sm rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-12 h-12 bg-primary rounded-full flex items-center justify-center">
+                    <i class="fa fa-user text-white"></i>
+                </div>
+                <div>
+                    <h3 class="text-xl font-bold text-white" id="account-name">我的账号</h3>
+                    <p class="text-sm text-white/80">同步已开启，修改自动同步</p>
+                </div>
+            </div>
+            <h4 class="font-medium mb-3">同步设置（用GitHub Gist，完全不用代理，稳定不跨域）</h4>
+            <form id="gist-form" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">你的Gist ID</label>
+                    <input type="text" id="gist-id" required placeholder="比如：a1b2c3d4e5f6g7h8i9j0" class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">你的GitHub Token</label>
+                    <input type="password" id="github-token" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                    <p class="text-xs text-white/60 mt-1">Token需要勾选gist权限，创建地址：<a href="https://github.com/settings/tokens/new?scopes=gist" target="_blank" class="text-primary underline">点这里创建</a></p>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" id="logout-btn" class="flex-1 py-2 px-4 border border-red-500/50 rounded-lg text-red-300 hover:bg-red-500/10 transition">退出登录</button>
+                    <button type="submit" class="flex-1 py-2 px-4 bg-primary text-white rounded-lg hover:bg-primary/90 transition">保存设置</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 侧边栏 -->
+    <aside class="fixed left-0 top-0 h-full w-56 bg-white/5 backdrop-blur-sm p-4 overflow-y-auto hidden" id="sidebar">
+        <div class="flex items-center gap-2 mb-8">
+            <div class="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+                <i class="fa fa-bookmark text-white"></i>
+            </div>
+            <h1 class="text-xl font-bold">我的书签</h1>
+        </div>
+        <ul id="category-list" class="space-y-1 relative">
+            <!-- 分类会动态生成，只有一级子分类 -->
+        </ul>
+        <div class="mt-4 pt-4 border-t border-white/10 space-y-2">
+            <button id="account-setting-btn" class="w-full py-2 px-3 rounded-lg bg-white/10 hover:bg-white/20 transition text-sm flex items-center gap-2">
+                <i class="fa fa-user"></i> 个人账户
+            </button>
+            <button id="add-category-btn" class="w-full py-2 px-3 rounded-lg bg-white/10 hover:bg-white/20 transition text-sm flex items-center gap-2">
+                <i class="fa fa-plus"></i> 添加分类
+            </button>
+        </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="ml-56 p-8 hidden" id="main-content">
+        <!-- 顶部搜索栏 -->
+        <div class="max-w-3xl mx-auto mb-8">
+            <div class="relative">
+                <input 
+                    type="text" 
+                    id="search-input"
+                    placeholder="搜索书签、网址..."
+                    class="w-full py-3 px-5 pl-12 rounded-full bg-white/10 backdrop-blur-sm border border-white/10 text-white placeholder-white/80 focus:outline-none focus:ring-2 focus:ring-primary/50 transition"
+                >
+                <i class="fa fa-search absolute left-5 top-1/2 -translate-y-1/2 text-white/80"></i>
+            </div>
+        </div>
+
+        <!-- 书签列表 -->
+        <div class="mb-6 flex justify-between items-center max-w-7xl mx-auto">
+            <h2 id="current-category-title" class="text-2xl font-bold">全部书签</h2>
+            <div class="flex gap-2">
+                <button id="import-bookmark-btn" class="py-2 px-4 rounded-lg bg-white/10 hover:bg-white/20 transition flex items-center gap-2">
+                    <i class="fa fa-upload"></i> 导入书签
+                </button>
+                <input type="file" id="import-file-input" accept=".html" class="hidden">
+                <button id="add-bookmark-btn" class="py-2 px-4 rounded-lg bg-primary hover:bg-primary/90 transition flex items-center gap-2">
+                    <i class="fa fa-plus"></i> 添加书签
+                </button>
+            </div>
+        </div>
+        <div id="bookmark-grid" class="space-y-6 max-w-7xl mx-auto">
+            <!-- 书签卡片会动态生成，支持子分类标签页 -->
+        </div>
+    </main>
+
+    <!-- 添加/编辑书签弹窗 -->
+    <div id="bookmark-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden items-center justify-center z-50">
+        <div class="bg-white/20 backdrop-blur-sm rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
+            <h3 id="modal-title" class="text-xl font-bold text-white mb-4">添加新书签</h3>
+            <form id="bookmark-form" class="space-y-4">
+                <input type="hidden" id="bookmark-id">
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">网站名称</label>
+                    <input type="text" id="bookmark-name" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">网站地址</label>
+                    <input type="url" id="bookmark-url" required placeholder="https://..." class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">分类</label>
+                    <select id="bookmark-category" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white">
+                        <!-- 分类选项动态生成 -->
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">描述（可选）</label>
+                    <textarea id="bookmark-desc" rows="2" class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" id="close-modal-btn" class="flex-1 py-2 px-4 border border-white/20 rounded-lg text-white hover:bg-white/10 transition">取消</button>
+                    <button type="submit" class="flex-1 py-2 px-4 bg-primary text-white rounded-lg hover:bg-primary/90 transition">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 添加分类弹窗 -->
+    <div id="category-modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden items-center justify-center z-50">
+        <div class="bg-white/20 backdrop-blur-sm rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
+            <h3 class="text-xl font-bold text-white mb-4">添加新分类</h3>
+            <form id="category-form" class="space-y-4">
+                <input type="hidden" id="parent-category-id">
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">分类名称</label>
+                    <input type="text" id="category-name" required class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white placeholder-white/60">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-white/90 mb-1">父分类</label>
+                    <select id="parent-category-select" class="w-full px-3 py-2 border border-white/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white/10 text-white">
+                        <option value="">根分类（主分类）</option>
+                        <!-- 父分类选项动态生成，只有主分类 -->
+                    </select>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="button" id="close-category-modal-btn" class="flex-1 py-2 px-4 border border-white/20 rounded-lg text-white hover:bg-white/10 transition">取消</button>
+                    <button type="submit" class="flex-1 py-2 px-4 bg-primary text-white rounded-lg hover:bg-primary/90 transition">保存</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // 你的账号配置，这里只有登录的账号密码，没有敏感的Token，不会被GitHub撤销
+        const USER_CONFIG = {
+            // 你自己的登录账号密码
+            username: "mybookmark",
+            password: "123456"
+        };
+
+        // 数据初始化
+        let bookmarks = [];
+        // 分类现在只有一级子分类，不能无限嵌套
+        let categories = [
+            { 
+                id: '1', 
+                name: '常用工具', 
+                children: [], 
+                expanded: true,
+                activeSub: null // 当前选中的子分类
+            },
+            { 
+                id: '2', 
+                name: '学习资源', 
+                expanded: true,
+                activeSub: null,
+                children: [
+                    { id: '2-1', name: '编程学习' },
+                    { id: '2-2', name: '在线课程' }
+                ] 
+            },
+            { id: '3', name: '娱乐网站', children: [], expanded: true, activeSub: null },
+            { id: '4', name: '工作相关', children: [], expanded: true, activeSub: null }
+        ];
+        let searchKeyword = '';
+        let draggedBookmarkId = null;
+        let draggedCategoryId = null; // 分类拖拽的ID
+        let currentIndicator = null; // 拖拽提示线
+        let gistConfig = null;
+        let syncTimer = null;
+        let isLoggedIn = false;
+        // 图标缓存，用来保存已经加载过的图标
+        let iconCache = {};
+
+        // 加载图标缓存
+        function loadIconCache() {
+            try {
+                const saved = localStorage.getItem('bookmark_icon_cache');
+                if (saved) {
+                    iconCache = JSON.parse(saved);
+                }
+            } catch (e) {
+                iconCache = {};
+            }
+        }
+
+        // 保存图标缓存
+        function saveIconCache() {
+            try {
+                localStorage.setItem('bookmark_icon_cache', JSON.stringify(iconCache));
+            } catch (e) {
+                // 存不下就忽略
+            }
+        }
+
+        // 生成唯一ID
+        function generateId() {
+            return Date.now().toString() + Math.random().toString(36).substr(2, 9);
+        }
+
+        // 查找主分类
+        function findMainCategory(id) {
+            return categories.find(c => c.id === id);
+        }
+
+        // 查找子分类
+        function findSubCategory(parentId, id) {
+            const parent = findMainCategory(parentId);
+            if (!parent) return null;
+            return parent.children.find(c => c.id === id);
+        }
+
+        // 查找分类，不管是主还是子
+        function findCategory(id) {
+            // 先找主分类
+            const main = findMainCategory(id);
+            if (main) return main;
+            // 再找子分类
+            for (let cat of categories) {
+                const sub = cat.children.find(c => c.id === id);
+                if (sub) return sub;
+            }
+            return null;
+        }
+
+        // 删除分类
+        function removeCategory(id) {
+            // 先看是不是主分类
+            const index = categories.findIndex(c => c.id === id);
+            if (index !== -1) {
+                categories.splice(index, 1);
+                return true;
+            }
+            // 是不是子分类
+            for (let cat of categories) {
+                const subIndex = cat.children.findIndex(c => c.id === id);
+                if (subIndex !== -1) {
+                    cat.children.splice(subIndex, 1);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // 清除拖拽提示
+        function clearIndicator() {
+            if (currentIndicator) {
+                currentIndicator.remove();
+                currentIndicator = null;
+            }
+        }
+
+        // 更新提示，立刻显示，不用防抖，因为区域大了，不会闪烁
+        function updateIndicator(target, type) {
+            clearIndicator();
+            const indicator = document.createElement('div');
+            if (type === 'top') {
+                indicator.className = 'drop-indicator';
+                indicator.style.top = '0';
+                target.appendChild(indicator);
+            } else if (type === 'bottom') {
+                indicator.className = 'drop-indicator';
+                indicator.style.bottom = '0';
+                target.appendChild(indicator);
+            } else {
+                indicator.className = 'drop-indicator-child';
+                target.appendChild(indicator);
+            }
+            currentIndicator = indicator;
+        }
+
+        // Canvas星空背景：大幅优化性能，减少DOM节点和内存占用
+        function initStarCanvas() {
+            const canvas = document.getElementById('stars-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // 适配屏幕大小
+            function resizeCanvas() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            }
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+
+            // 生成星星数据
+            const stars = [];
+            for (let i = 0; i < 100; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height * 0.7,
+                    size: Math.random() * 2 + 1,
+                    opacity: Math.random() * 0.5 + 0.5,
+                    speed: (Math.random() * 0.02 + 0.01)
+                });
+            }
+
+            // 动画循环
+            function animate() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                stars.forEach(star => {
+                    // 闪烁效果
+                    star.opacity += star.speed;
+                    if (star.opacity > 1 || star.opacity < 0.2) {
+                        star.speed = -star.speed;
+                    }
+                    
+                    // 绘制星星
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${star.opacity})`;
+                    ctx.fill();
+                });
+
+                requestAnimationFrame(animate);
+            }
+            animate();
+        }
+
+        // 获取网站图标，带缓存，不会重复请求
+        function getFavicon(url) {
+            try {
+                const domain = new URL(url).hostname;
+                // 先看缓存里有没有
+                if (iconCache[domain]) {
+                    return iconCache[domain];
+                }
+                // 没有的话，返回默认的，然后后台加载
+                const icon = `https://www.google.com/s2/favicons?sz=64&domain=${domain}`;
+                // 预加载，然后存到缓存
+                const img = new Image();
+                img.onload = () => {
+                    // 加载成功，存到缓存
+                    iconCache[domain] = icon;
+                    saveIconCache();
+                    // 刷新所有这个域名的图标
+                    document.querySelectorAll(`img[src*="${domain}"]`).forEach(el => {
+                        el.src = icon;
+                    });
+                };
+                img.onerror = () => {
+                    // 失败了，试icon.horse
+                    const backupIcon = `https://icon.horse/icon/${domain}`;
+                    const img2 = new Image();
+                    img2.onload = () => {
+                        iconCache[domain] = backupIcon;
+                        saveIconCache();
+                        document.querySelectorAll(`img[src*="${domain}"]`).forEach(el => {
+                            el.src = backupIcon;
+                        });
+                    };
+                    img2.src = backupIcon;
+                };
+                img.src = icon;
+                return icon;
+            } catch (e) {
+                return '';
+            }
+        }
+
+        // 图标加载失败，自动切换备用服务
+        function handleIconError(img, url) {
+            try {
+                const domain = new URL(url).hostname;
+                // 先看缓存里有没有
+                if (iconCache[domain]) {
+                    img.src = iconCache[domain];
+                    return;
+                }
+                // 先试Google的，失败了试icon.horse的，再失败就显示默认
+                if (img.src.includes('google.com')) {
+                    const backupIcon = `https://icon.horse/icon/${domain}`;
+                    img.src = backupIcon;
+                    // 存到缓存
+                    iconCache[domain] = backupIcon;
+                    saveIconCache();
+                } else {
+                    // 都失败了，显示默认的globe图标
+                    img.style.display = 'none';
+                    img.nextElementSibling.style.display = 'flex';
+                }
+            } catch (e) {
+                img.style.display = 'none';
+                img.nextElementSibling.style.display = 'flex';
+            }
+        }
+
+        // 保存到GitHub Gist，GitHub API原生支持CORS，完全不用代理
+        async function saveToGist() {
+            if (!gistConfig) return;
+            try {
+                const data = JSON.stringify({
+                    bookmarks,
+                    categories,
+                    updatedAt: Date.now()
+                });
+                // 直接请求GitHub的API，原生支持CORS，没有跨域问题
+                await fetch(`https://api.github.com/gists/${gistConfig.id}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `token ${gistConfig.token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        files: {
+                            'bookmark-data.json': {
+                                content: data
+                            }
+                        }
+                    })
+                });
+            } catch (e) {
+                console.error('Gist保存失败', e);
+            }
+        }
+
+        // 从GitHub Gist加载，GitHub API原生支持CORS，完全不用代理
+        async function loadFromGist() {
+            if (!gistConfig) return 'error';
+            try {
+                // 直接请求GitHub的API，原生支持CORS，没有跨域问题
+                const res = await fetch(`https://api.github.com/gists/${gistConfig.id}`, {
+                    headers: {
+                        'Authorization': `token ${gistConfig.token}`
+                    }
+                });
+                if (res.ok) {
+                    const gist = await res.json();
+                    const file = gist.files['bookmark-data.json'];
+                    if (file) {
+                        const data = JSON.parse(file.content);
+                        if (data.bookmarks) bookmarks = data.bookmarks;
+                        if (data.categories) categories = data.categories;
+                        return 'ok';
+                    } else {
+                        // 文件不存在，是第一次使用
+                        return 'not_found';
+                    }
+                } else {
+                    // 其他错误，比如401认证失败
+                    return 'error';
+                }
+            } catch (e) {
+                console.error('Gist加载失败', e);
+                // 网络错误
+                return 'error';
+            }
+        }
+
+        // 触发同步
+        function triggerSync() {
+            // 防抖，避免频繁同步
+            if (syncTimer) clearTimeout(syncTimer);
+            syncTimer = setTimeout(async () => {
+                await saveToGist();
+            }, 1000);
+        }
+
+        // 删除分类
+        async function deleteCategory(categoryId) {
+            // 不能删除最后一个分类
+            if (categories.length <= 1) {
+                alert('至少需要保留一个分类哦~');
+                return;
+            }
+            const cat = findCategory(categoryId);
+            if (!cat) return;
+            if (!confirm(`确定要删除分类「${cat.name}」吗？`)) return;
+
+            // 把该分类下的书签移到常用工具
+            const rootCat = findMainCategory('1'); // 常用工具的ID
+            bookmarks.forEach(bookmark => {
+                if (bookmark.category === categoryId) {
+                    bookmark.category = '1';
+                }
+            });
+
+            // 删除分类
+            removeCategory(categoryId);
+
+            // 保存
+            saveData();
+            renderCategories();
+            renderBookmarks();
+        }
+
+        // 切换分类展开/折叠
+        function toggleCategory(categoryId) {
+            const cat = findMainCategory(categoryId);
+            if (!cat) return;
+            cat.expanded = !cat.expanded;
+            saveData();
+            renderCategories();
+            // 只刷新当前分类的区域，不用整个页面
+            const group = document.getElementById(`cat-${categoryId}`);
+            if (group) {
+                const newGroup = renderSingleMainCategory(cat);
+                group.replaceWith(newGroup);
+            }
+        }
+
+        // 滚动到对应的分类，滚动到页面的1/3处，用百分比
+        function scrollToCategory(categoryId) {
+            const element = document.getElementById(`cat-${categoryId}`);
+            if (!element) return;
+            // 计算滚动的位置，元素的位置，减去页面的1/3，这样元素就会在页面的1/3处
+            const rect = element.getBoundingClientRect();
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const target = rect.top + scrollTop - window.innerHeight / 3;
+            window.scrollTo({ top: target, behavior: 'smooth' });
+        }
+
+        // 切换子分类，只刷新当前主分类的区域，不用整个页面
+        function switchSubTab(mainId, subId) {
+            const main = findMainCategory(mainId);
+            if (!main) return;
+            main.activeSub = subId;
+            saveData();
+            // 只刷新当前主分类的区域，不用整个页面
+            const group = document.getElementById(`cat-${mainId}`);
+            if (group) {
+                const newGroup = renderSingleMainCategory(main);
+                group.replaceWith(newGroup);
+            }
+        }
+
+        // 处理分类拖拽排序
+        function handleCategoryDrop(targetId, isChild = false) {
+            if (!draggedCategoryId || draggedCategoryId === targetId) return;
+            
+            // 找到拖拽的分类
+            const draggedCat = findCategory(draggedCategoryId);
+            if (!draggedCat) return;
+
+            // 先从原来的位置删掉
+            removeCategory(draggedCategoryId);
+
+            if (isChild) {
+                // 拖到目标分类里当子分类
+                const targetCat = findMainCategory(targetId);
+                if (targetCat) {
+                    // 把拖拽的分类变成子分类
+                    targetCat.children.push(draggedCat);
+                    targetCat.expanded = true; // 自动展开
+                }
+            } else {
+                // 同级排序，找到目标的位置，插入到目标前面
+                const targetIndex = categories.findIndex(c => c.id === targetId);
+                // 找到拖拽的分类，放到主分类里
+                categories.splice(targetIndex + 1, 0, draggedCat);
+            }
+
+            // 重置
+            draggedCategoryId = null;
+            clearIndicator();
+            // 保存
+            saveData();
+            // 刷新
+            renderCategories();
+            renderBookmarks();
+        }
+
+        // 处理书签拖拽到分类
+        function handleDropToCategory(categoryId) {
+            if (!draggedBookmarkId) return;
+            // 找到书签
+            const bookmark = bookmarks.find(b => b.id === draggedBookmarkId);
+            if (!bookmark) return;
+            // 如果已经是这个分类，不用改
+            if (bookmark.category === categoryId) return;
+            // 修改分类
+            bookmark.category = categoryId;
+            // 保存
+            saveData();
+            // 重置
+            draggedBookmarkId = null;
+            // 刷新
+            renderCategories();
+            renderBookmarks();
+        }
+
+        // 渲染单个主分类的内容，用来局部刷新
+        function renderSingleMainCategory(cat) {
+            const hasChildren = cat.children && cat.children.length > 0;
+            // 主分类的分组
+            const group = document.createElement('div');
+            group.className = 'category-group';
+            group.id = `cat-${cat.id}`;
+            
+            // 分类标题
+            const groupTitle = document.createElement('h3');
+            groupTitle.className = `text-lg font-semibold mb-4 pb-2 border-b border-white/20 flex items-center gap-2`;
+            groupTitle.innerHTML = `
+                <i class="fa fa-folder-o"></i> ${cat.name}
+            `;
+            group.appendChild(groupTitle);
+
+            if (hasChildren) {
+                // 有子分类，显示子分类的标签栏，和参考图一样
+                const tabBar = document.createElement('div');
+                tabBar.className = 'flex gap-2 mb-4 flex-wrap';
+                
+                // 默认选中第一个子分类
+                if (!cat.activeSub && cat.children.length > 0) {
+                    cat.activeSub = cat.children[0].id;
+                }
+                
+                // 渲染子分类标签
+                for (let sub of cat.children) {
+                    const tab = document.createElement('button');
+                    tab.className = `sub-tab ${cat.activeSub === sub.id ? 'active' : ''}`;
+                    tab.textContent = sub.name;
+                    tab.dataset.subTab = `${cat.id}:${sub.id}`;
+                    tabBar.appendChild(tab);
+                }
+                group.appendChild(tabBar);
+
+                // 显示当前选中的子分类的书签
+                const currentSub = cat.children.find(c => c.id === cat.activeSub);
+                if (currentSub) {
+                    const subBookmarks = bookmarks.filter(b => b.category === currentSub.id);
+                    if (subBookmarks.length > 0) {
+                        const catGrid = document.createElement('div');
+                        catGrid.className = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3';
+                        subBookmarks.forEach(bookmark => {
+                            const card = document.createElement('div');
+                            card.className = 'bg-white/20 backdrop-blur-sm rounded-lg p-3 shadow-md hover:shadow-lg hover:bg-white/30 transition group relative cursor-move';
+                            card.draggable = true;
+                            card.dataset.bookmarkId = bookmark.id;
+                            card.innerHTML = `
+                                <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition flex gap-1">
+                                    <button data-edit="${bookmark.id}" class="w-5 h-5 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white">
+                                        <i class="fa fa-pencil text-xs"></i>
+                                    </button>
+                                    <button data-delete="${bookmark.id}" class="w-5 h-5 rounded-full bg-white/10 hover:bg-red-500/30 flex items-center justify-center text-white hover:text-red-300">
+                                        <i class="fa fa-trash text-xs"></i>
+                                    </button>
+                                </div>
+                                <a href="${bookmark.url}" target="_blank" class="block" onclick="event.stopPropagation()">
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <img src="${getFavicon(bookmark.url)}" alt="" class="w-8 h-8 rounded" loading="lazy" onerror="handleIconError(this, '${bookmark.url}')">
+                                        <div class="w-8 h-8 rounded bg-white/10 flex items-center justify-center hidden">
+                                            <i class="fa fa-globe text-white/80 text-xs"></i>
+                                        </div>
+                                        <h3 class="font-medium text-white text-sm truncate">${bookmark.name}</h3>
+                                    </div>
+                                    ${bookmark.desc ? `<p class="text-xs text-white/80 line-clamp-2">${bookmark.desc}</p>` : ''}
+                                </a>
+                            `;
+                            // 拖拽事件
+                            card.addEventListener('dragstart', (e) => {
+                                draggedBookmarkId = bookmark.id;
+                                card.classList.add('dragging');
+                                e.dataTransfer.effectAllowed = 'move';
+                            });
+                            card.addEventListener('dragend', () => {
+                                card.classList.remove('dragging');
+                            });
+                            catGrid.appendChild(card);
+                        });
+                        group.appendChild(catGrid);
+                    } else {
+                        const empty = document.createElement('div');
+                        empty.className = 'text-center py-6 text-white/60';
+                        empty.textContent = '该子分类下暂无书签';
+                        group.appendChild(empty);
+                    }
+                }
+            } else {
+                // 没有子分类，直接显示主分类的书签
+                const catBookmarks = bookmarks.filter(b => b.category === cat.id);
+                if (catBookmarks.length > 0) {
+                    const catGrid = document.createElement('div');
+                    catGrid.className = 'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3';
+                    catBookmarks.forEach(bookmark => {
+                        const card = document.createElement('div');
+                        card.className = 'bg-white/20 backdrop-blur-sm rounded-lg p-3 shadow-md hover:shadow-lg hover:bg-white/30 transition group relative cursor-move';
+                        card.draggable = true;
+                        card.dataset.bookmarkId = bookmark.id;
+                        card.innerHTML = `
+                            <div class="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition flex gap-1">
+                                <button data-edit="${bookmark.id}" class="w-5 h-5 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white">
+                                    <i class="fa fa-pencil text-xs"></i>
+                                </button>
+                                <button data-delete="${bookmark.id}" class="w-5 h-5 rounded-full bg-white/10 hover:bg-red-500/30 flex items-center justify-center text-white hover:text-red-300">
+                                    <i class="fa fa-trash text-xs"></i>
+                                </button>
+                            </div>
+                            <a href="${bookmark.url}" target="_blank" class="block" onclick="event.stopPropagation()">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <img src="${getFavicon(bookmark.url)}" alt="" class="w-8 h-8 rounded" loading="lazy" onerror="handleIconError(this, '${bookmark.url}')">
+                                    <div class="w-8 h-8 rounded bg-white/10 flex items-center justify-center hidden">
+                                        <i class="fa fa-globe text-white/80 text-xs"></i>
+                                    </div>
+                                    <h3 class="font-medium text-white text-sm truncate">${bookmark.name}</h3>
+                                </div>
+                                ${bookmark.desc ? `<p class="text-xs text-white/80 line-clamp-2">${bookmark.desc}</p>` : ''}
+                            </a>
+                        `;
+                        // 拖拽事件
+                        card.addEventListener('dragstart', (e) => {
+                            draggedBookmarkId = bookmark.id;
+                            card.classList.add('dragging');
+                            e.dataTransfer.effectAllowed = 'move';
+                        });
+                        card.addEventListener('dragend', () => {
+                            card.classList.remove('dragging');
+                        });
+                        catGrid.appendChild(card);
+                    });
+                    group.appendChild(catGrid);
+                } else {
+                    const empty = document.createElement('div');
+                    empty.className = 'text-center py-6 text-white/60';
+                    empty.textContent = '该分类下暂无书签';
+                    group.appendChild(empty);
+                }
+            }
+
+            return group;
+        }
+
+        // 渲染分类列表
+        function renderCategories() {
+            const categoryList = document.getElementById('category-list');
+            const categorySelect = document.getElementById('bookmark-category');
+            const parentSelect = document.getElementById('parent-category-select');
+            
+            // 清空
+            categoryList.innerHTML = '';
+            categorySelect.innerHTML = '';
+            parentSelect.innerHTML = '<option value="">根分类（主分类）</option>';
+
+            // 添加全部选项，点击滚动到顶部
+            const allItem = document.createElement('li');
+            allItem.innerHTML = `
+                <div class="flex items-center flex-1 py-2 px-3 rounded-lg hover:bg-white/10 transition cursor-pointer" data-all-scroll>
+                    <i class="fa fa-th-large"></i> 
+                    <span class="ml-2">全部书签</span>
+                </div>
+            `;
+            categoryList.appendChild(allItem);
+
+            // 渲染主分类
+            for (let cat of categories) {
+                const hasChildren = cat.children && cat.children.length > 0;
+                const isExpanded = cat.expanded;
+                
+                const item = document.createElement('li');
+                item.className = `group relative`;
+                item.draggable = true;
+                item.dataset.categoryId = cat.id;
+                
+                item.innerHTML = `
+                    <div class="flex items-center flex-1 py-2 px-3 rounded-lg hover:bg-white/10 transition cursor-pointer relative" data-cat-click="${cat.id}">
+                        <i class="fa fa-${hasChildren ? (isExpanded ? 'caret-down' : 'caret-right') : 'caret-right'} text-sm w-4 mr-1"></i>
+                        <i class="fa fa-folder-o"></i> 
+                        <span class="ml-2">${cat.name}</span>
+                    </div>
+                    <button data-delete-category="${cat.id}" class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-white/10 hover:bg-red-500/30 flex items-center justify-center text-white/70 hover:text-red-300 opacity-0 group-hover:opacity-100 transition">
+                        <i class="fa fa-times text-xs"></i>
+                    </button>
+                `;
+
+                categoryList.appendChild(item);
+
+                // 如果有子分类，并且展开了，渲染子分类，子分类没有图标
+                if (hasChildren && isExpanded) {
+                    for (let sub of cat.children) {
+                        const subItem = document.createElement('li');
+                        subItem.className = `group relative category-indent`;
+                        subItem.draggable = true;
+                        subItem.dataset.categoryId = sub.id;
+                        
+                        subItem.innerHTML = `
+                            <div class="flex items-center flex-1 py-2 px-3 rounded-lg hover:bg-white/10 transition cursor-pointer relative" data-sub-click="${cat.id}:${sub.id}">
+                                <span class="ml-5">${sub.name}</span>
+                            </div>
+                            <button data-delete-category="${sub.id}" class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-white/10 hover:bg-red-500/30 flex items-center justify-center text-white/70 hover:text-red-300 opacity-0 group-hover:opacity-100 transition">
+                                <i class="fa fa-times text-xs"></i>
+                            </button>
+                        `;
+
+                        categoryList.appendChild(subItem);
+                    }
+                }
+
+                // 分类选项
+                const opt1 = document.createElement('option');
+                opt1.value = cat.id;
+                opt1.textContent = cat.name;
+                categorySelect.appendChild(opt1);
+                // 父分类选项
+                const opt2 = document.createElement('option');
+                opt2.value = cat.id;
+                opt2.textContent = cat.name;
+                parentSelect.appendChild(opt2);
+                // 子分类的选项
+                for (let sub of cat.children) {
+                    const opt = document.createElement('option');
+                    opt.value = sub.id;
+                    opt.textContent = `${cat.name} / ${sub.name}`;
+                    categorySelect.appendChild(opt);
+                }
+            }
+        }
+
+        // 渲染书签列表
+        function renderBookmarks() {
+            const grid = document.getElementById('bookmark-grid');
+            
+            // 清空
+            grid.innerHTML = '';
+
+            // 过滤书签
+            let filtered = bookmarks;
+            // 搜索过滤
+            if (searchKeyword) {
+                const kw = searchKeyword.toLowerCase();
+                filtered = filtered.filter(b => 
+                    b.name.toLowerCase().includes(kw) || 
+                    b.desc?.toLowerCase().includes(kw) || 
+                    b.url.toLowerCase().includes(kw)
+                );
+            }
+
+            if (filtered.length === 0) {
+                grid.innerHTML = `
+                    <div class="col-span-full text-center py-12 text-white">
+                        <i class="fa fa-folder-open-o text-4xl mb-3"></i>
+                        <p>暂无书签，点击右上角添加你的第一个书签吧~</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 渲染主分类
+            for (let cat of categories) {
+                const group = renderSingleMainCategory(cat);
+                grid.appendChild(group);
+            }
+        }
+
+        // 保存数据
+        function saveData() {
+            // 先保存到本地
+            localStorage.setItem('my_bookmarks', JSON.stringify(bookmarks));
+            localStorage.setItem('my_categories', JSON.stringify(categories));
+            // 然后同步到Gist
+            triggerSync();
+        }
+
+        // 打开添加书签弹窗
+        function openBookmarkModal() {
+            const modal = document.getElementById('bookmark-modal');
+            const form = document.getElementById('bookmark-form');
+            const title = document.getElementById('modal-title');
+            
+            // 重置表单
+            form.reset();
+            document.getElementById('bookmark-id').value = '';
+            title.textContent = '添加新书签';
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        // 编辑书签
+        function editBookmark(id) {
+            const bookmark = bookmarks.find(b => b.id === id);
+            if (!bookmark) return;
+
+            const modal = document.getElementById('bookmark-modal');
+            const form = document.getElementById('bookmark-form');
+            const title = document.getElementById('modal-title');
+            
+            // 填充数据
+            document.getElementById('bookmark-id').value = bookmark.id;
+            document.getElementById('bookmark-name').value = bookmark.name;
+            document.getElementById('bookmark-url').value = bookmark.url;
+            document.getElementById('bookmark-category').value = bookmark.category;
+            document.getElementById('bookmark-desc').value = bookmark.desc || '';
+            
+            title.textContent = '编辑书签';
+            
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        // 删除书签
+        async function deleteBookmark(id) {
+            if (!confirm('确定要删除这个书签吗？')) return;
+            bookmarks = bookmarks.filter(b => b.id !== id);
+            saveData();
+            renderBookmarks();
+        }
+
+        // 关闭书签弹窗
+        function closeBookmarkModal() {
+            const modal = document.getElementById('bookmark-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // 打开分类弹窗
+        function openCategoryModal() {
+            const modal = document.getElementById('category-modal');
+            document.getElementById('category-form').reset();
+            document.getElementById('parent-category-id').value = '';
+            renderCategories(); // 更新父分类选项
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        // 关闭分类弹窗
+        function closeCategoryModal() {
+            const modal = document.getElementById('category-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // 关闭账户弹窗
+        function closeAccountModal() {
+            const modal = document.getElementById('account-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // 退出登录
+        function logout() {
+            isLoggedIn = false;
+            gistConfig = null;
+            localStorage.removeItem('login_user');
+            // 清空本地数据
+            localStorage.removeItem('my_bookmarks');
+            localStorage.removeItem('my_categories');
+            localStorage.removeItem('bookmark_gist_config');
+            localStorage.removeItem('bookmark_icon_cache');
+            // 刷新页面
+            window.location.reload();
+        }
+
+        // 处理书签导入
+        async function handleImportFile(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async function(event) {
+                const html = event.target.result;
+                // 解析HTML内容
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const links = doc.querySelectorAll('a');
+                let addedCount = 0;
+
+                links.forEach(link => {
+                    const url = link.href;
+                    const name = link.textContent.trim();
+                    // 过滤无效链接
+                    if (!url || !name || url.startsWith('javascript:') || url.startsWith('file:')) return;
+
+                    // 提取对应的分类（文件夹名称）
+                    let category = '导入的书签';
+                    let parent = link.parentElement;
+                    while (parent) {
+                        const folderTitle = parent.querySelector('h3');
+                        if (folderTitle) {
+                            category = folderTitle.textContent.trim();
+                            break;
+                        }
+                        parent = parent.parentElement;
+                    }
+
+                    // 找到对应的分类，没有的话创建
+                    let cat = findCategory(category);
+                    if (!cat) {
+                        // 先找有没有同名的主分类
+                        cat = categories.find(c => c.name === category);
+                        if (!cat) {
+                            // 创建新的主分类
+                            cat = { id: generateId(), name: category, children: [], expanded: true, activeSub: null };
+                            categories.push(cat);
+                        }
+                    }
+
+                    // 避免重复导入
+                    const exists = bookmarks.find(b => b.url === url);
+                    if (!exists) {
+                        bookmarks.push({
+                            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                            name: name,
+                            url: url,
+                            category: cat.id,
+                            desc: ''
+                        });
+                        addedCount++;
+                    }
+                });
+
+                // 保存
+                saveData();
+                renderCategories();
+                renderBookmarks();
+                alert(`导入完成！成功添加了 ${addedCount} 个新书签，自动创建了对应的分类。`);
+                // 重置输入，方便下次导入
+                e.target.value = '';
+            };
+            reader.readAsText(file);
+        }
+
+        // 登录
+        async function doLogin(username, password, remember) {
+            // 验证账号
+            if (username === USER_CONFIG.username && password === USER_CONFIG.password) {
+                isLoggedIn = true;
+
+                // 加载图标缓存
+                loadIconCache();
+
+                // 登录后，自动从本地加载之前保存的Gist配置
+                const savedGist = localStorage.getItem('bookmark_gist_config');
+                if (savedGist) {
+                    gistConfig = JSON.parse(savedGist);
+                    // 自动填充到表单
+                    document.getElementById('gist-id').value = gistConfig.id;
+                    document.getElementById('github-token').value = gistConfig.token;
+                }
+                document.getElementById('account-name').textContent = username;
+
+                // 记住登录
+                if (remember) {
+                    localStorage.setItem('login_user', JSON.stringify({username, password}));
+                }
+
+                // 隐藏登录页
+                document.getElementById('login-page').classList.add('hidden');
+                // 显示加载
+                document.getElementById('loading').classList.remove('hidden');
+
+                // 如果有保存的Gist配置，自动加载云端数据
+                if (gistConfig) {
+                    try {
+                        const status = await loadFromGist();
+                        // 启动定时同步
+                        setInterval(async () => {
+                            await loadFromGist();
+                            renderCategories();
+                            renderBookmarks();
+                        }, 30000); // 30秒检查一次更新
+                    } catch (e) {
+                        console.error('Gist加载失败', e);
+                    }
+                }
+
+                // 隐藏加载，显示内容
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('sidebar').classList.remove('hidden');
+                document.getElementById('main-content').classList.remove('hidden');
+
+                renderCategories();
+                renderBookmarks();
+                return true;
+            } else {
+                document.getElementById('login-error').classList.remove('hidden');
+                return false;
+            }
+        }
+
+        // 初始化
+        async function init() {
+            initStarCanvas();
+
+            // 事件委托，所有事件都委托到父元素，不会丢失
+            document.addEventListener('click', (e) => {
+                const target = e.target.closest('[data-all-scroll]');
+                if (target) {
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    return;
+                }
+
+                const catClick = e.target.closest('[data-cat-click]');
+                if (catClick) {
+                    const catId = catClick.dataset.catClick;
+                    const cat = findMainCategory(catId);
+                    if (cat && cat.children && cat.children.length > 0) {
+                        toggleCategory(catId);
+                    }
+                    scrollToCategory(catId);
+                    if (cat && cat.children && cat.children.length > 0) {
+                        switchSubTab(catId, cat.children[0].id);
+                    }
+                    return;
+                }
+
+                const subClick = e.target.closest('[data-sub-click]');
+                if (subClick) {
+                    const [mainId, subId] = subClick.dataset.subClick.split(':');
+                    scrollToCategory(mainId);
+                    switchSubTab(mainId, subId);
+                    return;
+                }
+
+                const subTab = e.target.closest('[data-sub-tab]');
+                if (subTab) {
+                    const [mainId, subId] = subTab.dataset.subTab.split(':');
+                    switchSubTab(mainId, subId);
+                    return;
+                }
+
+                const editBtn = e.target.closest('[data-edit]');
+                if (editBtn) {
+                    editBookmark(editBtn.dataset.edit);
+                    return;
+                }
+
+                const deleteBtn = e.target.closest('[data-delete]');
+                if (deleteBtn) {
+                    deleteBookmark(deleteBtn.dataset.delete);
+                    return;
+                }
+
+                const deleteCatBtn = e.target.closest('[data-delete-category]');
+                if (deleteCatBtn) {
+                    e.stopPropagation();
+                    deleteCategory(deleteCatBtn.dataset.deleteCategory);
+                    return;
+                }
+            });
+
+            // 拖拽事件委托
+            document.addEventListener('dragstart', (e) => {
+                // 处理分类的拖拽
+                const categoryItem = e.target.closest('[data-category-id]');
+                if (categoryItem) {
+                    draggedCategoryId = categoryItem.dataset.categoryId;
+                    categoryItem.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    return;
+                }
+            });
+            document.addEventListener('dragover', (e) => {
+                if (!draggedCategoryId && !draggedBookmarkId) return;
+                const target = e.target.closest('.flex-1');
+                if (!target) return;
+                e.preventDefault();
+                const rect = target.getBoundingClientRect();
+                const y = e.clientY - rect.top;
+                const height = rect.height;
+                
+                if (y < height * 0.2) {
+                    // 上半部分，插入到前面
+                    updateIndicator(target, 'top');
+                } else if (y > height * 0.8) {
+                    // 下半部分，插入到后面
+                    updateIndicator(target, 'bottom');
+                } else {
+                    // 中间，拖成子分类
+                    updateIndicator(target, 'child');
+                }
+            });
+
+            document.addEventListener('dragleave', (e) => {
+                const target = e.target.closest('.flex-1');
+                if (!target) return;
+                clearIndicator();
+            });
+
+            document.addEventListener('drop', (e) => {
+                const target = e.target.closest('.flex-1');
+                if (!target) return;
+                e.preventDefault();
+                clearIndicator();
+                if (draggedCategoryId) {
+                    // 如果是分类拖拽，判断是排序还是拖成子分类
+                    const rect = target.getBoundingClientRect();
+                    const y = e.clientY - rect.top;
+                    const height = rect.height;
+                    const catId = target.parentElement.dataset.categoryId;
+                    
+                    if (y < height * 0.2) {
+                        // 上半部分，同级排序，放到前面
+                        handleCategoryDrop(catId, false);
+                    } else if (y > height * 0.8) {
+                        // 下半部分，同级排序，放到后面
+                        const targetIndex = categories.findIndex(c => c.id === catId);
+                        const draggedCat = findCategory(draggedCategoryId);
+                        if (draggedCat) {
+                            removeCategory(draggedCategoryId);
+                            categories.splice(targetIndex + 1, 0, draggedCat);
+                            draggedCategoryId = null;
+                            saveData();
+                            renderCategories();
+                            renderBookmarks();
+                        }
+                    } else {
+                        // 中间，拖成子分类
+                        handleCategoryDrop(catId, true);
+                    }
+                } else if (draggedBookmarkId) {
+                    // 书签拖拽，移动分类
+                    const catId = target.parentElement.dataset.categoryId;
+                    handleDropToCategory(catId);
+                }
+            });
+
+            document.addEventListener('dragend', (e) => {
+                clearIndicator();
+                document.querySelectorAll('.dragging').forEach(el => {
+                    el.classList.remove('dragging');
+                });
+                draggedCategoryId = null;
+                draggedBookmarkId = null;
+            });
+
+            // 绑定固定按钮的事件，这些不会变
+            document.getElementById('login-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const username = document.getElementById('login-username').value;
+                const password = document.getElementById('login-password').value;
+                const remember = document.getElementById('remember-me').checked;
+                await doLogin(username, password, remember);
+            });
+
+            document.getElementById('account-setting-btn').addEventListener('click', () => {
+                document.getElementById('account-modal').classList.remove('hidden');
+                document.getElementById('account-modal').classList.add('flex');
+            });
+
+            document.getElementById('gist-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const id = document.getElementById('gist-id').value;
+                const token = document.getElementById('github-token').value;
+                gistConfig = { id, token };
+                localStorage.setItem('bookmark_gist_config', JSON.stringify(gistConfig));
+                try {
+                    const status = await loadFromGist();
+                    if (status === 'ok') {
+                        renderCategories();
+                        renderBookmarks();
+                        alert('连接成功！同步已开启，你的书签会自动同步到你的Gist，下次刷新会自动加载配置。');
+                    } else if (status === 'not_found') {
+                        alert('连接成功，第一次使用，会自动把你的书签同步到Gist。');
+                        await saveToGist();
+                    } else {
+                        alert('连接失败，请检查你的Gist ID和Token是否正确。');
+                        gistConfig = null;
+                        localStorage.removeItem('bookmark_gist_config');
+                        closeAccountModal();
+                        return;
+                    }
+                    setInterval(async () => {
+                        await loadFromGist();
+                        renderCategories();
+                        renderBookmarks();
+                    }, 30000);
+                } catch (e) {
+                    alert('连接失败，请检查你的Gist ID和Token是否正确。');
+                    gistConfig = null;
+                    localStorage.removeItem('bookmark_gist_config');
+                    closeAccountModal();
+                    return;
+                }
+                closeAccountModal();
+            });
+
+            document.getElementById('logout-btn').addEventListener('click', logout);
+
+            document.getElementById('add-bookmark-btn').addEventListener('click', openBookmarkModal);
+            document.getElementById('close-modal-btn').addEventListener('click', closeBookmarkModal);
+            document.getElementById('add-category-btn').addEventListener('click', openCategoryModal);
+            document.getElementById('close-category-modal-btn').addEventListener('click', closeCategoryModal);
+
+            document.getElementById('import-bookmark-btn').addEventListener('click', () => {
+                document.getElementById('import-file-input').click();
+            });
+            document.getElementById('import-file-input').addEventListener('change', handleImportFile);
+
+            document.getElementById('search-input').addEventListener('input', (e) => {
+                searchKeyword = e.target.value;
+                renderBookmarks();
+            });
+
+            document.getElementById('bookmark-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const id = document.getElementById('bookmark-id').value;
+                const name = document.getElementById('bookmark-name').value;
+                let url = document.getElementById('bookmark-url').value;
+                if (!url.startsWith('http')) {
+                    url = 'https://' + url;
+                }
+                const category = document.getElementById('bookmark-category').value;
+                const desc = document.getElementById('bookmark-desc').value;
+
+                if (id) {
+                    const index = bookmarks.findIndex(b => b.id === id);
+                    if (index !== -1) {
+                        bookmarks[index] = { ...bookmarks[index], name, url, category, desc };
+                    }
+                } else {
+                    bookmarks.push({
+                        id: Date.now().toString(),
+                        name,
+                        url,
+                        category,
+                        desc
+                    });
+                }
+
+                saveData();
+                renderBookmarks();
+                closeBookmarkModal();
+            });
+
+            document.getElementById('category-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const name = document.getElementById('category-name').value;
+                const parentId = document.getElementById('parent-category-select').value;
+                
+                const newCat = {
+                    id: generateId(),
+                    name: name,
+                    children: [],
+                    expanded: true,
+                    activeSub: null
+                };
+
+                if (parentId) {
+                    const parent = findMainCategory(parentId);
+                    if (parent) {
+                        parent.children.push(newCat);
+                        parent.expanded = true;
+                    }
+                } else {
+                    categories.push(newCat);
+                }
+
+                saveData();
+                renderCategories();
+                closeCategoryModal();
+            });
+
+            document.getElementById('bookmark-modal').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) closeBookmarkModal();
+            });
+            document.getElementById('category-modal').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) closeCategoryModal();
+            });
+            document.getElementById('account-modal').addEventListener('click', (e) => {
+                if (e.target === e.currentTarget) closeAccountModal();
+            });
+
+            // 检查自动登录
+            const savedLogin = localStorage.getItem('login_user');
+            if (savedLogin) {
+                const {username, password} = JSON.parse(savedLogin);
+                await doLogin(username, password, true);
+                return;
+            }
+
+            document.getElementById('loading').classList.add('hidden');
+        }
+
+        // 启动
+        init();
+    </script>
+</body>
+</html>
